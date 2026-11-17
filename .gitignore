@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local overrides: may contain a connection string
+.env
+.env.*
+!.env.example
+
+# Runtime logs, if anyone runs the service from a checkout
+logs/
+
+# Scratch probe scripts. The schema verification queries are deliberately not committed: they carry
+# database and host names, and they are a one-off diagnostic rather than part of the build.
+tools/_*
+
+# packaging output
+dist/

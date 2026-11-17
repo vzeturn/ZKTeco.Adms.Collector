@@ -1,0 +1,16 @@
+.git
+.mypy_cache
+.pytest_cache
+.ruff_cache
+tests/
+tools/
+docs/
+deploy/
+dist/
+build.ps1
+requirements-dev.txt
+*.md
+.env
+.env.example
+__pycache__/
+*.pyc

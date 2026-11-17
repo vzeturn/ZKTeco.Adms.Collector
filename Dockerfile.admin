@@ -1,0 +1,82 @@
+# ADMS admin console -- generic container image (optional; the documented hosting is IIS on-premises,
+# see the README).
+#
+# Sibling to the collector's own Dockerfile, not a variant of it: the two images share a base
+# (python:3.12-slim + ODBC Driver 18 + the optional RDS CA bundle) because both talk to the same
+# ATTENDANCEDB database over the same driver, but they run different entry points, need different
+# body-size limits, and -- unlike the collector -- the console sits behind a login and must never be
+# reachable from the device network. Build it with `-f Dockerfile.admin`; `docker build .` with no -f
+# still builds the collector.
+#
+#   * adms.admin.serve binds a host/port from the CLI/env and runs waitress. This image binds 0.0.0.0
+#     directly (no IIS in front). Restrict who can reach the port to operators only, and NOT the
+#     device network.
+#   * The DPAPI/registry connection-string path (adms.dbconfig) is Windows-only and unused here;
+#     supply ADMS_SQL_CONNECTION as an environment variable, as for the collector's image.
+#   * Logging writes structured JSON to stdout; ADMS_LOG_DIR is left unset so nothing writes inside
+#     the container's ephemeral filesystem.
+
+FROM python:3.12-slim AS base
+
+# ---- ODBC Driver 18 for SQL Server ------------------------------------------------------------
+# Identical to the collector's own image -- see its Dockerfile for the libgssapi-krb5-2 note (the
+# driver's shared object depends on it for Kerberos support even though msodbcsql18's own package
+# metadata does not pull it in on Debian 12).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        gnupg \
+        ca-certificates \
+        unixodbc \
+        libgssapi-krb5-2 \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+        > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- Optional: Amazon RDS CA bundle -------------------------------------------------------
+# Same rationale as the collector's image: the connection string validates the server certificate
+# (TrustServerCertificate=no), so the client needs a trust chain to whatever CA signed the database
+# server's certificate. Remove or replace this step if your SQL Server is not on Amazon RDS.
+RUN curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+        -o /usr/local/share/ca-certificates/rds-global-bundle.crt \
+    && update-ca-certificates \
+    && apt-get purge -y gnupg curl \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---- Python dependencies ----------------------------------------------------------------------
+# Same two pinned packages as the collector -- the console adds no dependency of its own.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --no-compile -r requirements.txt
+
+# ---- Application code -------------------------------------------------------------------------
+# The whole src/ tree, not just adms/admin/: the console imports adms.db.connection,
+# adms.errors, adms.models, adms.protocol.commands and adms.config from the shared package, the
+# same way it does on the IIS/on-premises deployment (see install-admin-site.ps1, which also
+# copies src/ wholesale for the same reason).
+COPY src/ ./src/
+
+ENV PYTHONPATH=/app/src \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Non-root, same posture as the collector: this container should hold no more privilege than it
+# needs to bind a port and open outbound ODBC/HTTPS connections, even though (unlike the collector)
+# this endpoint sits behind a login.
+RUN useradd --system --no-create-home --uid 10002 adms-console
+USER adms-console
+
+EXPOSE 80
+
+# Port 80, not adms.admin.serve's own CLI default of 8081: in a container this process is the direct
+# listener rather than something IIS reverse-proxies to. --host 0.0.0.0 is required for the same
+# reason as for the collector: the module's own CLI default (127.0.0.1) is correct behind IIS and
+# wrong for a bare container. To let the non-root user bind :80, lower the unprivileged port start
+# (`--sysctl net.ipv4.ip_unprivileged_port_start=0`) or map a high port to 80 outside the container.
+ENTRYPOINT ["python", "-m", "adms.admin.serve", "--host", "0.0.0.0", "--port", "80"]

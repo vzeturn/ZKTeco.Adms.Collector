@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  IIS site configuration for the ADMS admin console.
+
+  This is the console's site, distinct from the collector's. AspNetCoreModuleV2 (ANCM) starts
+  `python -m adms.admin.serve` and reverse-proxies to it on a loopback port IIS chooses
+  (ASPNETCORE_PORT), in out-of-process hosting mode. The two sites run in separate app pools on
+  separate ports (the console on 8081), so a fault or a compromise in one process cannot reach into
+  the other.
+
+  PREREQUISITE: the AspNetCoreModuleV2 module must be installed. It ships with the ASP.NET Core /
+  .NET Hosting Bundle (not with a bare IIS install). deploy/install-admin-site.ps1 checks for it and
+  tells you where to get it. This machine has ANCM but does NOT have HttpPlatformHandler, so the
+  console is fronted by ANCM; the two are functionally interchangeable reverse proxies for a child
+  process.
+
+  SECURITY NOTE: unlike the collector, this site sits behind a login. Authentication is the
+  application's own (a session cookie the console issues), not IIS Windows auth, because the operators
+  are database principals rather than domain accounts. Put the site on a segment operators can reach
+  and keep it off the device network entirely.
+
+  NOTE ON EDITING: XML forbids a double hyphen inside a comment, so the prose here uses single
+  punctuation deliberately. build.ps1 parses this file as XML on every run to catch that mistake.
+-->
+<configuration>
+
+  <system.webServer>
+
+    <handlers>
+      <!-- Remove any inherited handler from a parent configuration before adding ours; otherwise the
+           first matching handler wins and it may not be this one. -->
+      <remove name="aspNetCore" />
+      <add name="aspNetCore"
+           path="*"
+           verb="*"
+           modules="AspNetCoreModuleV2"
+           resourceType="Unspecified" />
+    </handlers>
+
+    <!--
+      processPath and arguments: EDIT THE PYTHON PATH to the site's virtual environment.
+      install-admin-site.ps1 rewrites these paths for you when the site lives somewhere other than
+      C:\inetpub\adms-console. Pointing at the venv's python.exe directly means its site-packages is
+      used without activating anything.
+
+      hostingModel="OutOfProcess": ANCM launches the child and reverse-proxies to it, rather than
+      loading a .NET assembly in-process. This is the mode a non-.NET (Python) child requires.
+
+      stdoutLogEnabled: ANCM captures the child's stdout. Keep it on, because a process that fails to
+      start is otherwise a bare 502 with nothing to read.
+
+      startupTimeLimit: the first request builds the object graph, decrypts the registry value and
+      opens a SQL connection over the WAN. 60 seconds is generous; a cold start killed at 10 seconds
+      looks exactly like a configuration fault and wastes an afternoon.
+
+      requestTimeout: form posts and page renders are quick, but leave the default minute so a slow
+      first query is not clipped into a confusing 502.
+    -->
+    <aspNetCore processPath="C:\inetpub\adms-console\.venv\Scripts\python.exe"
+                arguments="-m adms.admin.serve"
+                hostingModel="OutOfProcess"
+                stdoutLogEnabled="true"
+                stdoutLogFile="C:\inetpub\adms-console\logs\stdout"
+                startupTimeLimit="60"
+                requestTimeout="00:01:00"
+                forwardWindowsAuthToken="false">
+      <environmentVariables>
+        <!-- ANCM assigns the loopback port via ASPNETCORE_PORT; serve.py reads it. The port is not
+             passed as a command-line argument because arguments are not env-expanded. This flag makes
+             ANCM forward X-Forwarded-For / X-Forwarded-Proto so the app records the real client IP. -->
+        <environmentVariable name="ASPNETCORE_FORWARDEDHEADERS_ENABLED" value="true" />
+        <!-- PYTHONPATH so `adms` resolves without an install step. Points at the src folder. -->
+        <environmentVariable name="PYTHONPATH" value="C:\inetpub\adms-console\src" />
+        <!-- Unbuffered, or stdout lines appear minutes late in the ANCM stdout log. -->
+        <environmentVariable name="PYTHONUNBUFFERED" value="1" />
+        <environmentVariable name="PYTHONUTF8" value="1" />
+
+        <!-- Dated JSON log, alongside the stdout capture above. -->
+        <environmentVariable name="ADMS_LOG_DIR" value="C:\inetpub\adms-console\logs" />
+        <environmentVariable name="ADMS_LOG_LEVEL" value="INFO" />
+
+        <!-- Site offset from UTC, used for audit timestamps. -->
+        <environmentVariable name="ADMS_UTC_OFFSET_HOURS" value="7" />
+
+        <!-- Waitress worker threads. A handful of operators, not a device fleet, so this is lower than
+             the collector's. Also the cap on concurrent SQL connections, since each thread holds one. -->
+        <environmentVariable name="ADMS_ADMIN_THREADS" value="4" />
+
+        <!-- Skip TLS certificate validation on the SQL connection. Default false, so the certificate
+             IS validated. Only set true for a server with a self-signed certificate; run
+             deploy/import-rds-ca.ps1 for Amazon RDS instead. -->
+        <environmentVariable name="ADMS_SQL_TRUST_SERVER_CERT" value="false" />
+
+        <!-- The SQL connection string is deliberately NOT here. It lives DPAPI-encrypted in
+             HKLM\SOFTWARE\AdmsConsole\AttendanceDb (or the collector's sub-key as a fallback); see
+             deploy/set-db-connection.ps1. This file is plaintext, sits in the site folder, is
+             overwritten by a redeploy and copied by every backup. -->
+      </environmentVariables>
+    </aspNetCore>
+
+    <!--
+      The console only ever receives form posts, never a photo or template upload, so the body cap is
+      an order of magnitude below the collector's: 1 MiB. A login page does not need 28.6 MB of
+      headroom, and a tighter cap is one fewer lever for an authenticated abuser.
+    -->
+    <security>
+      <requestFiltering>
+        <requestLimits maxAllowedContentLength="1048576" maxQueryString="4096" maxUrl="4096" />
+      </requestFiltering>
+    </security>
+
+    <!-- Do not advertise the platform. -->
+    <httpProtocol>
+      <customHeaders>
+        <remove name="X-Powered-By" />
+      </customHeaders>
+    </httpProtocol>
+
+    <!-- Pass through whatever the application returns instead of replacing its body with an IIS error
+         page: the console renders its own styled 403, 404 and 503 pages, and an IIS page in their place
+         would leak the platform and lose the intended wording. -->
+    <httpErrors existingResponse="PassThrough" />
+
+  </system.webServer>
+
+</configuration>

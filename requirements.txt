@@ -1,0 +1,19 @@
+# Runtime dependencies. Two, deliberately.
+#
+# Pinned exactly, not floated. This service is the only path attendance data takes from a device into
+# the database and it runs unattended; a transitive change arriving on its own schedule is not a trade
+# worth making for a patch nobody asked for.
+
+# SQL Server access. Needs 'ODBC Driver 18 for SQL Server' installed on the host as a native library --
+# on Windows that is a normal MSI, which is the main reason this hosting model is simpler than the
+# container image a container variant needs.
+#
+# 5.3.0 rather than 5.2.0, and the reason matters when picking the host's Python: pyodbc ships binary
+# wheels per interpreter version, and 5.2.0 has none for Python 3.14. On a 3.14 host pip therefore
+# falls back to building from source and fails on a missing windows.h unless the full MSVC build tools
+# and Windows SDK are installed. 5.3.0 has a 3.14 wheel. Verified by installing on 3.14.5 win-amd64.
+pyodbc==5.3.0
+
+# WSGI server. Pure Python, no compilation on Windows, and a real server rather than a FastCGI bridge.
+# IIS reverse-proxies to it via AspNetCoreModuleV2 (out-of-process); see deploy/web.config.
+waitress==3.0.2

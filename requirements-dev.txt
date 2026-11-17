@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# Local development only. Never deployed to the site folder.
+ruff==0.8.6
+mypy==1.14.1
+
+# The property suite under tests/. Here and nowhere else: requirements.txt stays at two packages, and a
+# test-only import in the runtime list is how a two-package deployment stops being one.
+pytest==8.3.4
