@@ -45,9 +45,13 @@ def get_logger() -> JsonLogger:
     if _logger is None:
         import os
 
+        from .observability import report_error
+
         _logger = build_logger(
             level=(os.environ.get("ADMS_LOG_LEVEL") or "INFO").upper(),
             log_dir=(os.environ.get("ADMS_LOG_DIR") or ""),
+            # A no-op until adms.observability.init_sentry runs with a DSN configured.
+            error_sink=report_error,
             service="adms-attendance-collector",
         )
     return _logger

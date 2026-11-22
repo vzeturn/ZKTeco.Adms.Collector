@@ -39,6 +39,11 @@ param(
 
     [switch] $SkipFirewall,
 
+    # Sentry DSN for error reporting (ADMS_SENTRY_DSN in web.config). Optional: when omitted, a DSN
+    # already in the site's web.config is kept, so re-running the installer never switches it off.
+    # A DSN only lets this host submit events, so it is not a credential worth DPAPI.
+    [string] $SentryDsn = '',
+
     # Stage everything except the working site when AspNetCoreModuleV2 is not installed yet. Files,
     # virtual environment, app pool, ACLs and web.config are put in place; the site returns 500.19
     # until the module is present. Deliberately NOT the default.
@@ -198,7 +203,18 @@ Step 'Write web.config'
 $template = Get-Content (Join-Path $PSScriptRoot 'web.config.admin') -Raw
 $template = $template.Replace('C:\inetpub\adms-console', $SitePath)
 # UTF-8 with BOM, consistent with the .ps1 rule here.
-[System.IO.File]::WriteAllText((Join-Path $SitePath 'web.config'), $template,
+# Keep the Sentry DSN a previous install (or an operator) put in web.config unless one is given.
+$siteConfig = Join-Path $SitePath 'web.config'
+$dsnValue = [System.Security.SecurityElement]::Escape($SentryDsn)
+if (-not $dsnValue -and (Test-Path $siteConfig)) {
+    $found = [regex]::Match((Get-Content $siteConfig -Raw), 'name="ADMS_SENTRY_DSN" value="([^"]*)"')
+    if ($found.Success) { $dsnValue = $found.Groups[1].Value }
+}
+if ($dsnValue) {
+    $template = $template.Replace('name="ADMS_SENTRY_DSN" value=""', "name=""ADMS_SENTRY_DSN"" value=""$dsnValue""")
+    Info 'Sentry error reporting: DSN set'
+}
+[System.IO.File]::WriteAllText($siteConfig, $template,
     [System.Text.UTF8Encoding]::new($true))
 Info "web.config written, paths pointed at $SitePath"
 

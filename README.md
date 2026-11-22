@@ -410,6 +410,31 @@ EXEC dbo.ADMS_PurgeArchives @RetainDays = 90;
 
 `ADMS_ATTLOG_RAW` is deliberately not purged by it — that is the lossless attendance record.
 
+### Error reporting (Sentry)
+
+Off until `ADMS_SENTRY_DSN` is set; both sites (collector and console) report to the same Sentry
+project, tagged `component=collector` / `component=console`. Every `ERROR` log line becomes an event,
+and requests are traced at `ADMS_SENTRY_TRACES_SAMPLE_RATE` (default `0.02`, i.e. 2%).
+
+Nothing personal leaves the host: `send_default_pii=False`, no request block (headers, query string
+with `SN=`, body, client IP), no local variables, no breadcrumbs, transaction names as route templates
+(`/*/iclock/cdata`), and messages scrubbed of PINs, names, serials, record lines and connection-string
+credentials — see `src/adms/observability.py`.
+
+```powershell
+# Set the DSN once; re-running the installer later keeps it.
+./deploy/install-iis.ps1        -SentryDsn '<dsn>'
+./deploy/install-admin-site.ps1 -SentryDsn '<dsn>'
+
+# Send one test event from the site's virtual environment (prints the event id).
+$env:ADMS_SENTRY_DSN = '<dsn>'
+$env:PYTHONPATH = 'C:\inetpub\adms-collector\src'
+C:\inetpub\adms-collector\.venv\Scripts\python.exe -m adms.hosting.serve --sentry-test
+```
+
+The repository's `.mcp.json` declares the Sentry MCP (`https://mcp.sentry.dev/mcp`) for reading those
+issues from Claude Code.
+
 ## Design notes
 
 Three rules explain most of the code:
