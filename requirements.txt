@@ -1,4 +1,4 @@
-# Runtime dependencies. Two, deliberately.
+# Runtime dependencies. Two for the service itself, deliberately, plus the error reporter below.
 #
 # Pinned exactly, not floated. This service is the only path attendance data takes from a device into
 # the database and it runs unattended; a transitive change arriving on its own schedule is not a trade
@@ -17,3 +17,10 @@ pyodbc==5.3.0
 # WSGI server. Pure Python, no compilation on Windows, and a real server rather than a FastCGI bridge.
 # IIS reverse-proxies to it via AspNetCoreModuleV2 (out-of-process); see deploy/web.config.
 waitress==3.0.2
+
+# Error reporting to Sentry (adms.observability). Imported only when ADMS_SENTRY_DSN is set, so a
+# site without a DSN runs exactly as before. Its two dependencies are pinned here too, for the same
+# reason as everything above: nothing in this process changes on its own schedule.
+sentry-sdk==2.74.0
+urllib3==2.8.0
+certifi==2026.10.23

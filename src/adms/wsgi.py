@@ -33,7 +33,7 @@ from urllib.parse import parse_qsl
 from .models import AdmsRequest, AdmsResponse
 from .service import AdmsService
 
-__all__ = ["AdmsWsgiApp", "build_request", "create_app"]
+__all__ = ["AdmsWsgiApp", "build_request", "create_app", "with_error_reporting"]
 
 #: Cap on a request body read from the socket. ATTPHOTO and template uploads are the large ones and
 #: run to a few megabytes; 32 MB is far above anything observed and still bounds the damage from a
@@ -72,9 +72,7 @@ def build_request(environ: dict[str, Any]) -> AdmsRequest:
     body = _read_body(environ)
 
     headers = {
-        key[5:].replace("_", "-").lower(): value
-        for key, value in environ.items()
-        if key.startswith("HTTP_")
+        key[5:].replace("_", "-").lower(): value for key, value in environ.items() if key.startswith("HTTP_")
     }
     for key in ("CONTENT_TYPE", "CONTENT_LENGTH"):
         if environ.get(key):
@@ -202,6 +200,21 @@ _REASONS = {
 
 def _reason(status: int) -> str:
     return _REASONS.get(status, "OK" if 200 <= status < 300 else "Error")
+
+
+def with_error_reporting(app: Any) -> Any:
+    """
+    Wrap a WSGI app in Sentry's middleware (low-rate performance traces, unhandled errors) when
+    :mod:`adms.observability` has started reporting; otherwise return it unchanged. Lives here because
+    this module owns the WSGI surface; the scrubbing rules live in ``adms.observability``.
+    """
+    from .observability import is_enabled
+
+    if not is_enabled():
+        return app
+    from sentry_sdk.integrations.wsgi import SentryWsgiMiddleware
+
+    return SentryWsgiMiddleware(app)
 
 
 def create_app(service: AdmsService | None = None, log=None) -> AdmsWsgiApp:

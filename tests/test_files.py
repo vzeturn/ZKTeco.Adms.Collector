@@ -1263,9 +1263,9 @@ def runtime_pins() -> list[str]:
     return [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
 
 
-def test_runtime_dependencies_are_exactly_two_exact_pins() -> None:
+def test_runtime_dependencies_are_exact_pins_of_a_known_set() -> None:
     """
-    Two packages, pinned exactly. This service is the only path attendance data takes from a device into
+    Two packages for the service, plus the Sentry SDK and its two dependencies, all pinned exactly. This service is the only path attendance data takes from a device into
     the database and it runs unattended, so a transitive change arriving on its own schedule is not a
     trade worth making. A test-only import in this list is how a two-package deployment stops being one,
     which is why ``pytest`` is in ``requirements-dev.txt`` alone.
@@ -1273,10 +1273,10 @@ def test_runtime_dependencies_are_exactly_two_exact_pins() -> None:
     Validates: Requirements 30.14
     """
     pins = runtime_pins()
-    assert len(pins) == 2, f"requirements.txt holds {len(pins)} requirement lines: {pins}"
     for pin in pins:
         assert re.fullmatch(r"[A-Za-z0-9_.-]+==[\w.]+", pin), f"{pin!r} is not an exact pin"
-    assert {pin.split("==")[0].lower() for pin in pins} == {"pyodbc", "waitress"}, pins
+    names = {pin.split("==")[0].lower() for pin in pins}
+    assert names == {"pyodbc", "waitress", "sentry-sdk", "urllib3", "certifi"}, pins
 
 
 def test_pyodbc_is_pinned_at_the_version_with_a_wheel() -> None:

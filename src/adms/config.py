@@ -46,6 +46,20 @@ def _env_int(name: str, default: int) -> int:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
 
 
+def _env_fraction(name: str, default: float) -> float:
+    """A float in [0, 1] -- a sample rate. Out of range is a deployment mistake, so it fails fast."""
+    raw = _env(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number between 0 and 1, got {raw!r}") from exc
+    if not 0.0 <= value <= 1.0:
+        raise ConfigError(f"{name} must be between 0 and 1, got {raw!r}")
+    return value
+
+
 def _env_int_tuple(name: str) -> tuple[int, ...]:
     """
     Parse a comma-separated list of integers. Blank (unset) returns an empty tuple, which is the
@@ -201,6 +215,16 @@ class Settings:
     #: Directory for the rolling log file. Empty means log to stdout only, which is what
     #: AspNetCoreModuleV2 captures into its own stdout log.
     log_dir: str = ""
+
+    # ── Error reporting (Sentry) ──────────────────────────────────────────────────────────
+    #: Sentry DSN. Empty (the default) means error reporting is off and sentry_sdk is never
+    #: imported. A DSN only lets a client *submit* events to one project, so it is configuration,
+    #: not a credential -- but it still comes from the host's configuration, never from source.
+    sentry_dsn: str = ""
+    sentry_environment: str = "production"
+    #: Share of requests traced for performance. Kept small: the free plan's quota is the limit,
+    #: and a device fleet polling every few seconds would spend it in hours at 1.0.
+    sentry_traces_sample_rate: float = 0.02
     extra_options: dict[str, str] = field(default_factory=dict)
 
 
@@ -252,6 +276,9 @@ def load_settings() -> Settings:
         realtime=_env_bool("ADMS_REALTIME", True),
         log_level=_env("ADMS_LOG_LEVEL", "INFO").upper(),
         log_dir=_env("ADMS_LOG_DIR"),
+        sentry_dsn=_env("ADMS_SENTRY_DSN"),
+        sentry_environment=_env("ADMS_SENTRY_ENVIRONMENT", "production"),
+        sentry_traces_sample_rate=_env_fraction("ADMS_SENTRY_TRACES_SAMPLE_RATE", 0.02),
         extra_options=extra,
     )
 

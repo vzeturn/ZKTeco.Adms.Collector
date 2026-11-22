@@ -56,7 +56,7 @@ RUN curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 WORKDIR /app
 
 # ---- Python dependencies ----------------------------------------------------------------------
-# requirements.txt stays at exactly two pinned packages (pyodbc, waitress) -- see the file's own
+# requirements.txt holds exact pins only (pyodbc, waitress, and the Sentry SDK) -- see the file's own
 # comment for why that is deliberate. Nothing dev-only (ruff/mypy/pytest) ships in the image.
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --no-compile -r requirements.txt

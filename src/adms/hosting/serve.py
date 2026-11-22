@@ -48,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         "cap on concurrent connections to SQL Server (default: 8).",
     )
     parser.add_argument(
+        "--sentry-test",
+        action="store_true",
+        help="send one test error to Sentry (needs ADMS_SENTRY_DSN), print its id, then exit.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="verify configuration and database connectivity, then exit. Use this after install "
@@ -60,12 +65,19 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     from adms.composition import get_logger, get_service
-    from adms.wsgi import create_app
+    from adms.wsgi import create_app, with_error_reporting
+
+    from adms import observability
 
     log = get_logger()
 
+    if args.sentry_test:
+        return observability.run_sentry_test(component="collector", log=log)
+
     if args.check:
         return _run_check(log)
+
+    observability.init_from_environment(component="collector", log=log)
 
     try:
         service = get_service()
@@ -76,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         log.error("Could not start: configuration or database unavailable.", exc)
         return 1
 
-    app = create_app(service, log=log)
+    app = with_error_reporting(create_app(service, log=log))
 
     try:
         from waitress import serve

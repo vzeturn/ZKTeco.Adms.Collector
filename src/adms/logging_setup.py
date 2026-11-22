@@ -26,6 +26,7 @@ import re
 import sys
 import threading
 import traceback
+from collections.abc import Callable
 from typing import IO
 
 __all__ = ["JsonLogger", "NullLogger", "scrub", "build_logger"]
@@ -72,7 +73,7 @@ class JsonLogger:
     the same file without one produces interleaved half-lines that no JSON parser will read.
     """
 
-    __slots__ = ("_threshold", "_stream", "_context", "_log_dir", "_lock")
+    __slots__ = ("_threshold", "_stream", "_context", "_log_dir", "_lock", "_error_sink")
 
     def __init__(
         self,
@@ -80,6 +81,7 @@ class JsonLogger:
         stream: IO[str] | None = None,
         log_dir: str = "",
         _lock: object = None,
+        error_sink: Callable[[str, BaseException | None], None] | None = None,
         **context: object,
     ) -> None:
         self._threshold = _LEVELS.get(level.upper(), 20)
@@ -87,6 +89,9 @@ class JsonLogger:
         self._log_dir = log_dir or ""
         #: Shared with children so all writers to one file serialise against the same lock.
         self._lock = _lock or threading.Lock()
+        #: Called once per ERROR line, after it is written -- how errors reach Sentry
+        #: (:func:`adms.observability.report_error`). Optional, and it may never break logging.
+        self._error_sink = error_sink
         #: Fields stamped on every line -- serial, route, and so on.
         self._context = {k: v for k, v in context.items() if v is not None}
 
@@ -105,6 +110,7 @@ class JsonLogger:
         child._stream = self._stream
         child._log_dir = self._log_dir
         child._lock = self._lock
+        child._error_sink = self._error_sink
         child._context = {k: v for k, v in merged.items() if v is not None}
         return child
 
@@ -155,6 +161,11 @@ class JsonLogger:
                     self._append_file(line)
         except Exception:  # noqa: BLE001 - a logger that raises is worse than one that is silent
             pass
+        if level == "ERROR" and self._error_sink is not None:
+            try:
+                self._error_sink(message, exc)
+            except Exception:  # noqa: BLE001 - same rule: reporting an error must not raise one
+                pass
 
     def _append_file(self, line: str) -> None:
         """
@@ -185,5 +196,10 @@ class NullLogger:
     def error(self, message: str, exc: BaseException | None = None, **fields: object) -> None: ...
 
 
-def build_logger(level: str = "INFO", log_dir: str = "", **context: object) -> JsonLogger:
-    return JsonLogger(level=level, log_dir=log_dir, **context)
+def build_logger(
+    level: str = "INFO",
+    log_dir: str = "",
+    error_sink: Callable[[str, BaseException | None], None] | None = None,
+    **context: object,
+) -> JsonLogger:
+    return JsonLogger(level=level, log_dir=log_dir, error_sink=error_sink, **context)

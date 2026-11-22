@@ -64,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
         "fleet, so this is lower than the collector's (default: 4).",
     )
     parser.add_argument(
+        "--sentry-test",
+        action="store_true",
+        help="send one test error to Sentry (needs ADMS_SENTRY_DSN), print its id, then exit.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="verify configuration, database connectivity and that the APP_* tables exist, then exit.",
@@ -77,10 +82,17 @@ def main(argv: list[str] | None = None) -> int:
     from adms.composition import get_logger
     from adms.config import load_settings
 
+    from adms import observability
+
     log = get_logger()
+
+    if args.sentry_test:
+        return observability.run_sentry_test(component="console", log=log)
 
     if args.check:
         return _run_check(log)
+
+    observability.init_from_environment(component="console", log=log)
 
     try:
         settings = load_settings()
@@ -94,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from adms.admin.app import create_app
 
-    app = create_app(store, settings=settings, log=log)
+    from adms.wsgi import with_error_reporting
+
+    app = with_error_reporting(create_app(store, settings=settings, log=log))
 
     try:
         from waitress import serve  # type: ignore[import-untyped]
